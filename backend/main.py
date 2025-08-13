@@ -23,6 +23,7 @@ processor = VoiceToDWGProcessor()
 @app.post("/transcribe")
 async def transcribe_audio(audio_file: UploadFile = File(...)):
     """Endpoint to transcribe audio file"""
+    
     # Save uploaded file
     temp_audio_path = tempfile.mktemp(suffix=f".{audio_file.filename.split('.')[-1]}")
     with open(temp_audio_path, "wb") as buffer:
@@ -53,8 +54,8 @@ async def generate_dwg(data: dict):
     if not parameters:
         raise HTTPException(status_code=400, detail="No parameters provided")
     
-    dwg_path = processor.generate_dwg(parameters)
-    return {"dwg_path": dwg_path, "message": "DWG generated successfully"}
+    dwg_filename = processor.generate_dwg(parameters)
+    return {"dwg_filename": dwg_filename, "message": "DWG generated successfully"}
 
 @app.get("/download-dwg/{file_path}")
 async def download_dwg(file_path: str):

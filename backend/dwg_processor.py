@@ -10,7 +10,14 @@ import os
 import google.generativeai as genai
 import tempfile
 from dotenv import load_dotenv
+import uuid
+from pathlib import Path
+
 load_dotenv()
+
+# Create uploads directory for storing generated files
+UPLOAD_DIR = Path("generated_files")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
@@ -92,7 +99,6 @@ class VoiceToDWGProcessor:
             
             return json.loads(json_text)
         except Exception as e:
-            print(str(e))
             # Fallback parsing if Gemini fails
             return self._fallback_parameter_extraction(transcript)
     
@@ -175,10 +181,15 @@ class VoiceToDWGProcessor:
             for element in parameters.get('elements', []):
                 self._add_element_to_drawing(msp, element, length, width)
             
-            # Save to temporary file
-            temp_path = tempfile.mktemp(suffix='.dxf')
-            doc.saveas(temp_path)
-            return temp_path
+            # Generate unique filename
+            file_id = str(uuid.uuid4())[:8]
+            filename = f"drawing_{file_id}.dxf"
+            file_path = UPLOAD_DIR / filename
+            
+            # Save file
+            doc.saveas(str(file_path))
+            
+            return filename  # Return just the filename, not full path
         
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"DWG generation failed: {str(e)}")
