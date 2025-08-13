@@ -25,7 +25,7 @@ def main():
     with st.sidebar:
         st.header("How to Use")
         st.markdown("""
-        1. **Record** your voice command
+        1. **Record** your voice command (Red means listening, will automatically stop if no more audio detected)
         2. **Review** the transcript
         3. **Check** extracted parameters
         4. **Download** your DWG file
