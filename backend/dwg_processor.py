@@ -189,7 +189,7 @@ class VoiceToDWGProcessor:
             # Save file
             doc.saveas(str(file_path))
             
-            return file_path
+            return filename
         
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"DWG generation failed: {str(e)}")

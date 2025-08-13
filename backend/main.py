@@ -61,15 +61,13 @@ async def generate_dwg(data: dict):
 async def download_dwg(file_path: str):
     """Download generated DWG file"""
     if os.path.exists(file_path):
-        print("path exists...")
         return FileResponse(file_path, media_type='application/octet-stream', filename='drawing.dxf')
     else:
-        print("path doesn't exist?")
         raise HTTPException(status_code=404, detail="File not found")
 
 @app.post("/voice-to-dwg")
 async def voice_to_dwg_complete(audio_file: UploadFile = File(...)):
-    """voice -> transcript -> parameters -> DWG"""
+    """Complete pipeline: voice -> transcript -> parameters -> DWG"""
     # Save uploaded file
     temp_audio_path = tempfile.mktemp(suffix=f".{audio_file.filename.split('.')[-1]}")
     with open(temp_audio_path, "wb") as buffer:
@@ -77,13 +75,13 @@ async def voice_to_dwg_complete(audio_file: UploadFile = File(...)):
         buffer.write(content)
     
     try:
-        # Transcribe
+        # Step 1: Transcribe
         transcript = processor.transcribe_audio(temp_audio_path)
         
-        # Extract parameters
+        # Step 2: Extract parameters
         parameters = processor.extract_drawing_parameters(transcript)
         
-        # Generate DWG
+        # Step 3: Generate DWG
         dwg_path = processor.generate_dwg(parameters)
         
         return {
