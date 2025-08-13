@@ -23,7 +23,7 @@ processor = VoiceToDWGProcessor()
 @app.post("/transcribe")
 async def transcribe_audio(audio_file: UploadFile = File(...)):
     """Endpoint to transcribe audio file"""
-    
+
     # Save uploaded file
     temp_audio_path = tempfile.mktemp(suffix=f".{audio_file.filename.split('.')[-1]}")
     with open(temp_audio_path, "wb") as buffer:
@@ -61,8 +61,10 @@ async def generate_dwg(data: dict):
 async def download_dwg(file_path: str):
     """Download generated DWG file"""
     if os.path.exists(file_path):
+        print("path exists...")
         return FileResponse(file_path, media_type='application/octet-stream', filename='drawing.dxf')
     else:
+        print("path doesn't exist?")
         raise HTTPException(status_code=404, detail="File not found")
 
 @app.post("/voice-to-dwg")
