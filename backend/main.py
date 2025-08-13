@@ -1,9 +1,10 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-import tempfile
-import os
+from fastapi.responses import StreamingResponse
+import io
+from typing import Dict
 
+# import your in-memory processor
 from dwg_processor import VoiceToDWGProcessor
 
 app = FastAPI(title="Voice-to-DWG API")
@@ -18,82 +19,88 @@ app.add_middleware(
 )
 
 # Initialize processor
-processor = VoiceToDWGProcessor()
+processor = VoiceToDWGProcessor(cache_max_items=50, cache_max_bytes=50 * 1024 * 1024)
+
 
 @app.post("/transcribe")
 async def transcribe_audio(audio_file: UploadFile = File(...)):
     """Endpoint to transcribe audio file"""
-
-    # Save uploaded file
-    temp_audio_path = tempfile.mktemp(suffix=f".{audio_file.filename.split('.')[-1]}")
-    with open(temp_audio_path, "wb") as buffer:
-        content = await audio_file.read()
-        buffer.write(content)
-    
     try:
-        transcript = processor.transcribe_audio(temp_audio_path)
+        audio_bytes = await audio_file.read()
+        transcript = processor.transcribe_audio(audio_bytes)
         return {"transcript": transcript}
-    finally:
-        if os.path.exists(temp_audio_path):
-            os.remove(temp_audio_path)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/extract-parameters")
-async def extract_parameters(data: dict):
+async def extract_parameters(data: Dict):
     """Extract drawing parameters from transcript"""
     transcript = data.get("transcript", "")
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript provided")
-    
     parameters = processor.extract_drawing_parameters(transcript)
     return {"parameters": parameters}
 
+
 @app.post("/generate-dwg")
-async def generate_dwg(data: dict):
-    """Generate DWG file from parameters"""
+async def generate_dwg(data: Dict):
+    """Generate DWG file from parameters and store it in-memory cache."""
     parameters = data.get("parameters", {})
     if not parameters:
         raise HTTPException(status_code=400, detail="No parameters provided")
-    
-    dwg_filename = processor.generate_dwg(parameters)
-    return {"dwg_filename": dwg_filename, "message": "DWG generated successfully"}
+    filename = processor.generate_dwg(parameters)
+    return {"dwg_filename": filename, "download_url": f"/download-dwg/{filename}"}
 
-@app.get("/download-dwg/{file_path}")
-async def download_dwg(file_path: str):
-    """Download generated DWG file"""
-    if os.path.exists(file_path):
-        return FileResponse(file_path, media_type='application/octet-stream', filename='drawing.dxf')
-    else:
+
+@app.get("/download-dwg/{filename}")
+async def download_dwg(filename: str):
+    """Stream DXF file from in-memory cache"""
+    data = processor.get_file_bytes(filename)
+    if not data:
         raise HTTPException(status_code=404, detail="File not found")
+    buf = io.BytesIO(data)
+    buf.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(buf, media_type="application/dxf", headers=headers)
+
+
+# Helper
+@app.get("/list-dwgs")
+def list_dwgs():
+    """List cached DWG filenames (most recent first)."""
+    return {"files": processor.list_files()}
+
+
+@app.delete("/delete-dwg/{filename}")
+def delete_dwg(filename: str):
+    ok = processor.delete_file(filename)
+    if not ok:
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"deleted": filename}
+
 
 @app.post("/voice-to-dwg")
 async def voice_to_dwg_complete(audio_file: UploadFile = File(...)):
-    """Complete pipeline: voice -> transcript -> parameters -> DWG"""
-    # Save uploaded file
-    temp_audio_path = tempfile.mktemp(suffix=f".{audio_file.filename.split('.')[-1]}")
-    with open(temp_audio_path, "wb") as buffer:
-        content = await audio_file.read()
-        buffer.write(content)
-    
+    """voice -> transcript -> parameters -> DWG"""
     try:
-        # Step 1: Transcribe
-        transcript = processor.transcribe_audio(temp_audio_path)
-        
-        # Step 2: Extract parameters
+        audio_bytes = await audio_file.read()
+        transcript = processor.transcribe_audio(audio_bytes)
         parameters = processor.extract_drawing_parameters(transcript)
-        
-        # Step 3: Generate DWG
-        dwg_path = processor.generate_dwg(parameters)
-        
+        filename = processor.generate_dwg(parameters)
         return {
             "transcript": transcript,
             "parameters": parameters,
-            "dwg_path": dwg_path,
-            "download_url": f"/download-dwg/{dwg_path}"
+            "dwg_filename": filename,
+            "download_url": f"/download-dwg/{filename}"
         }
-    
-    finally:
-        if os.path.exists(temp_audio_path):
-            os.remove(temp_audio_path)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

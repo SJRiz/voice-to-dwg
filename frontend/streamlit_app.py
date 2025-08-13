@@ -1,8 +1,7 @@
 import streamlit as st
 import requests
-import tempfile
+import io
 import os
-import time
 from dotenv import load_dotenv
 from audio_recorder_streamlit import audio_recorder
 
@@ -81,102 +80,95 @@ def main():
         
         if 'dwg_ready' in st.session_state and st.session_state.dwg_ready:
             st.subheader("📁 Download")
+            # show download button directly using download_url or fetch on click
             if st.button("💾 Download DXF File", type="secondary", use_container_width=True):
-                download_dwg_file(st.session_state.dwg_path, BACKEND_URL)
+                # use the stored filename
+                filename_key = st.session_state.get("dwg_filename") or st.session_state.get("dwg_path")
+                if not filename_key:
+                    st.error("No DWG filename available.")
+                else:
+                    download_dwg_file(filename_key, BACKEND_URL)
 
 def process_voice_command(audio_bytes, uploaded_file, backend_url):
-    """Process the voice command through the complete pipeline"""
+    """Process the voice command through the complete pipeline without disk I/O."""
     
     with st.spinner("Processing your voice command..."):
-        temp_path = None
-        file_handle = None
-        
         try:
-            # Prepare file for upload
+            files = None
+
             if audio_bytes:
-                # Save recorded audio
-                temp_path = tempfile.mktemp(suffix='.wav')
-                with open(temp_path, 'wb') as f:
-                    f.write(audio_bytes)
-                
-                # Open file for upload
-                file_handle = open(temp_path, 'rb')
-                files = {'audio_file': ('recording.wav', file_handle, 'audio/wav')}
+                # audio_bytes is raw bytes from audio_recorder. Wrap in BytesIO and give a filename.
+                buf = io.BytesIO(audio_bytes)
+                buf.seek(0)
+                # choose a sensible filename and mime
+                files = {'audio_file': ('recording.wav', buf, 'audio/wav')}
             elif uploaded_file:
-                files = {'audio_file': (uploaded_file.name, uploaded_file, uploaded_file.type)}
+                # read uploaded file bytes
+                file_bytes = uploaded_file.read()
+                buf = io.BytesIO(file_bytes)
+                buf.seek(0)
+                mime = uploaded_file.type or 'application/octet-stream'
+                files = {'audio_file': (uploaded_file.name, buf, mime)}
             else:
                 st.error("No audio file provided")
                 return
-            
-            # Call the complete pipeline endpoint
-            response = requests.post(f"{backend_url}/voice-to-dwg", files=files)
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                # Store in session state
-                st.session_state.transcript = result['transcript']
-                st.session_state.parameters = result['parameters']
-                st.session_state.dwg_path = result['dwg_path']
-                st.session_state.dwg_ready = True
-                
-                st.success("✅ Voice command processed successfully!")
-                st.rerun()
-            else:
-                st.error(f"❌ Error processing voice command: {response.text}")
-        
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
-        
-        finally:
-            # Clean up - close file handle first, then delete file
-            if file_handle:
+
+            # POST to backend
+            try:
+                resp = requests.post(f"{backend_url.rstrip('/')}/voice-to-dwg", files=files, timeout=120)
+            finally:
+                # Close bytes buffer to free memory
                 try:
-                    file_handle.close()
-                except:
-                    pass
-            
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    # Add small delay
-                    time.sleep(0.1)
-                    os.remove(temp_path)
-                except PermissionError:
-                    # If still locked, try again after longer delay
-                    try:
-                        time.sleep(0.5)
-                        os.remove(temp_path)
-                    except:
-                        # If still can't delete, log but don't crash
-                        st.warning(f"Could not clean up temporary file: {temp_path}")
+                    buf.close()
                 except Exception:
                     pass
 
-def download_dwg_file(dwg_path, backend_url):
-    """Download the generated DWG file"""
+            if resp.status_code == 200:
+                result = resp.json()
+
+                dwg_filename = result.get('dwg_filename') or result.get('dwg_path') or result.get('dwg')
+
+                st.session_state.transcript = result.get('transcript', '')
+                st.session_state.parameters = result.get('parameters', {})
+                st.session_state.dwg_filename = dwg_filename
+                st.session_state.dwg_ready = bool(dwg_filename)
+
+                st.success("✅ Voice command processed successfully!")
+            else:
+                # show server response text (for debugging)
+                st.error(f"❌ Error processing voice command: {resp.status_code} — {resp.text}")
+
+        except requests.Timeout:
+            st.error("❌ Request timed out. Try again or increase backend timeout.")
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+
+def download_dwg_file(dwg_filename, backend_url):
+    """Download the generated DWG file from backend cache and present download button."""
     try:
-        download_url = f"{backend_url}/download-dwg/{dwg_path}"
-        response = requests.get(download_url)
-        
-        if response.status_code == 200:
+        download_url = f"{backend_url.rstrip('/')}/download-dwg/{dwg_filename}"
+        resp = requests.get(download_url, timeout=60)
+        if resp.status_code == 200:
+            # use the filename returned or a default name
+            download_name = f"{dwg_filename}" if dwg_filename else "voice_generated_drawing.dxf"
             st.download_button(
                 label="📥 Click to Download DXF",
-                data=response.content,
-                file_name="voice_generated_drawing.dxf",
-                mime="application/octet-stream",
+                data=resp.content,
+                file_name=download_name,
+                mime="application/dxf",
                 use_container_width=True
             )
             st.success("✅ File ready for download!")
         else:
-            st.error("❌ Error downloading file")
-    
+            st.error(f"❌ Error downloading file: {resp.status_code} — {resp.text}")
+    except requests.Timeout:
+        st.error("❌ Download timed out. Try again.")
     except Exception as e:
         st.error(f"❌ Download error: {str(e)}")
 
 # Demo section
 def show_demo():
     st.header("Demo & Examples")
-    
     with st.expander("See Example Parameters"):
         example_params = {
             "room_type": "kitchen",
@@ -191,6 +183,5 @@ def show_demo():
 
 if __name__ == "__main__":
     main()
-    
     st.markdown("---")
     show_demo()
