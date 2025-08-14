@@ -3,8 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import io
 from typing import Dict
-
-# import your in-memory processor
 from dwg_processor import VoiceToDWGProcessor
 
 app = FastAPI(title="Voice-to-DWG API")

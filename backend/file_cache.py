@@ -56,5 +56,5 @@ class InMemoryFileCache:
     def _evict_if_needed(self):
         while (len(self._cache) > self.max_items) or (self.current_bytes > self.max_bytes):
             # pop least-recently-used (first item)
-            k, (data, _) = self._cache.popitem(last=False)
+            _, (data, _) = self._cache.popitem(last=False)
             self.current_bytes -= len(data)
